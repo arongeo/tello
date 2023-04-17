@@ -31,53 +31,29 @@ fn check_for_valid_packet(data_stream: &[u8]) -> Option<(usize, usize)> {
 }
 
 
-fn h264_decode(frame_data: &[u8], decoder: &mut Decoder) -> Result<Vec<u8>, ()> {
+fn h264_decode(frame_data: &[u8], decoder: &mut Decoder) -> Result<(Vec<u8>, (usize, usize)), ()> {
     let mut buffer = vec![0; 2764800];
-    let mut img_rendered = 0;
     let yuv = match decoder.decode(frame_data) {
         Ok(o) => {
             match o {
                 Some(y) => {
-                    img_rendered += 1;
                     y
                 },
                 None => {
                     return Err(());
-                    //continue;
                 },
             }
         },
         Err(_) => {
             return Err(());
-            //continue;
         },
     };
 
     let dims = yuv.dimension_rgb();
 
     yuv.write_rgba8(&mut buffer);
-
-    /*
-    print!("COM: [");
-    for i in 0..data.len() {
-        print!("{}, ", data[i]);
-    }
-    print!("]\n");
-    */
-
-    /*
-    print!("ME: [");
-    for i in 0..according_to_me.len() {
-        print!("{}, ", according_to_me[i]);
-    }
-    print!("]\n");
-    */
         
-    if 0 < img_rendered {
-        Ok(buffer)
-    } else {
-        Err(())
-    }
+    Ok((buffer, dims))
 }
 
 fn main() {
@@ -86,7 +62,10 @@ fn main() {
         Err(e) => panic!("ERROR with creating socket: {}", e),
     };
     
-    sock.connect("192.168.10.1:8889");
+    match sock.connect("192.168.10.1:8889") {
+        Ok(_) => {},
+        Err(e) => panic!("Failed to connect: {}", e),
+    };
 
     sock.send(&("command".as_bytes()));
 
@@ -98,7 +77,7 @@ fn main() {
 
     let thread_thing = std::thread::spawn(|| {
         // receive video stream from tello on port 11111
-        let mut video_socket = match UdpSocket::bind("0.0.0.0:11111") {
+        let video_socket = match UdpSocket::bind("0.0.0.0:11111") {
             Ok(s) => s,
             Err(e) => panic!("ERROR with creating socket: {}", e),
         };
@@ -115,18 +94,6 @@ fn main() {
                 Ok(ml) => ml,
                 Err(_) => continue,
             };
-
-            /*
-            frame_packet[ptr..(ptr+msg_len)].clone_from_slice(&video_buffer[..msg_len]); //video_buffer[i - ptr];
-            ptr += msg_len;
-            */
-
-            /*
-            for i in 0..(msg_len) {
-                frame_packet[i + ptr] = video_buffer[i];
-            }
-            ptr += msg_len;
-            */
 
             frame_packet.extend_from_slice(&video_buffer[..msg_len]);
 
