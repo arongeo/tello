@@ -1,18 +1,9 @@
-use std::ffi::c_uchar;
-use std::{net::UdpSocket, time::Duration, io::stdin, path::Path};
-use cv::core::VecN;
+use std::{net::UdpSocket, io::stdin};
 use cv::highgui;
-use cv::prelude::DataType;
-use cv::prelude::MatTrait;
-use cv::prelude::ScalarTrait;
 use openh264::decoder::Decoder;
 use opencv as cv;
-use cv::highgui::WindowFlags;
 use cv::prelude::Mat;
-use cv::imgproc::cvt_color;
-use cv::imgproc::COLOR_RGBA2BGRA;
-use cv::imgproc::COLOR_RGBA2BGR;
-use cv::core::Vector;
+use cv::imgproc::{cvt_color, COLOR_RGBA2BGRA};
 
 use libc::c_void;
 
@@ -44,7 +35,7 @@ fn check_for_valid_packet(data_stream: &[u8]) -> Option<(usize, usize)> {
 }
 
 
-fn h264_decode(frame_data: &[u8], decoder: &mut Decoder) -> Result<(Mat, (usize, usize)), ()> {
+fn h264_decode(frame_data: &[u8], decoder: &mut Decoder) -> Result<Mat, ()> {
     let mut buffer = vec![0; 2764800];
     let yuv = match decoder.decode(frame_data) {
         Ok(o) => {
@@ -66,14 +57,9 @@ fn h264_decode(frame_data: &[u8], decoder: &mut Decoder) -> Result<(Mat, (usize,
 
     yuv.write_rgba8(&mut buffer);
 
-    //let mut bgra_buffer = unsafe { Mat::new_rows_cols(dims.1 as i32, dims.0 as i32, cv::core::CV_8UC4).unwrap() };
-    let mut bgra_buffer = Mat::default();
-    bgra_buffer.set_rows(dims.1 as i32);
-    bgra_buffer.set_rows(dims.0 as i32);
-    bgra_buffer.set_dims(2);
-    bgra_buffer.set_flags(cv::core::CV_8UC4);
+    let mut bgra_buffer = unsafe { Mat::new_rows_cols(dims.1 as i32, dims.0 as i32, cv::core::CV_8UC4).unwrap() };
 
-    let mut frame = unsafe { Mat::new_rows_cols_with_data(
+    let frame = unsafe { Mat::new_rows_cols_with_data(
             dims.1 as i32,
             dims.0 as i32,
             cv::core::CV_8UC4,
@@ -82,14 +68,14 @@ fn h264_decode(frame_data: &[u8], decoder: &mut Decoder) -> Result<(Mat, (usize,
         ).unwrap() 
     };
     
-    match cvt_color(&frame, &mut bgra_buffer, COLOR_RGBA2BGRA, cv::core::CV_8U) {
+    match cvt_color(&frame, &mut bgra_buffer, COLOR_RGBA2BGRA, 0) {
         Ok(_) => {},
         Err(e) => println!("Error image conversion failed: {:?}", e),
     };
     
     //println!("{}", bgra_buffer.at_pt_mut::<u8>(cv::core::Point_ { x: 0, y: 0 }).unwrap());
 
-    Ok((bgra_buffer, dims))
+    Ok(bgra_buffer)
 }
 
 fn main() {
@@ -118,15 +104,11 @@ fn main() {
             Err(e) => panic!("ERROR with creating socket: {}", e),
         };
     
-        let mut win = highgui::named_window("tello", highgui::WINDOW_AUTOSIZE);
+        let _win = highgui::named_window("tello", highgui::WINDOW_AUTOSIZE);
 
         let mut frame_packet = vec![];
 
         let mut decoder = Decoder::new().unwrap();
-        let mut now = std::time::Instant::now();
-        let mut a = 0;
-
-        let mut frame = Mat::default();
 
         loop {
             let mut video_buffer = [0; 1460];
@@ -140,22 +122,18 @@ fn main() {
             match check_for_valid_packet(&frame_packet) {
                 Some(frame_borders) => {
                     match h264_decode(&frame_packet[(frame_borders.0)..(frame_borders.1)], &mut decoder) {
-                        Ok((frbuf, dims)) => {
+                        Ok(frbuf) => {
                             frame_packet = frame_packet[(frame_borders.1)..(frame_packet.len())].to_vec();
                             
                             //frame = unsafe { Mat::new_rows_cols_with_data(dims.0 as i32, dims.1 as i32, cv::core::CV_8UC4, frbuf.as_mut_ptr() as *mut c_void, 1).unwrap() };
                 
                             match highgui::imshow("tello", &frbuf) {
-                                Ok(_) => println!("SUCCESS"),
+                                Ok(_) => {},
                                 Err(e) => println!("Error: {:?}", e),
                             };
 
-                            a += 1;
-                            if now.elapsed().as_secs_f64() >= 1.0 {
-                                now = std::time::Instant::now();
-                                println!("Got: {}", a);
-                                a = 0;
-                            }
+                            highgui::poll_key();
+
                         },
                         Err(_) => {
                             frame_packet = frame_packet[(frame_borders.1)..(frame_packet.len())].to_vec();
