@@ -690,6 +690,7 @@ name = "tello"
 version = "0.1.0"
 dependencies = [
  "image",
+ "libc",
  "opencv",
  "openh264",
 ]

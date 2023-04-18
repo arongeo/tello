@@ -1,6 +1,20 @@
+use std::ffi::c_uchar;
 use std::{net::UdpSocket, time::Duration, io::stdin, path::Path};
+use cv::core::VecN;
+use cv::highgui;
+use cv::prelude::DataType;
+use cv::prelude::MatTrait;
+use cv::prelude::ScalarTrait;
 use openh264::decoder::Decoder;
-use image;
+use opencv as cv;
+use cv::highgui::WindowFlags;
+use cv::prelude::Mat;
+use cv::imgproc::cvt_color;
+use cv::imgproc::COLOR_RGBA2BGRA;
+use cv::imgproc::COLOR_RGBA2BGR;
+use cv::core::Vector;
+
+use libc::c_void;
 
 fn check_for_valid_packet(data_stream: &[u8]) -> Option<(usize, usize)> {
     let mut zero_seq_len = 0;
@@ -26,12 +40,11 @@ fn check_for_valid_packet(data_stream: &[u8]) -> Option<(usize, usize)> {
         }
     }
 
-
     None
 }
 
 
-fn h264_decode(frame_data: &[u8], decoder: &mut Decoder) -> Result<(Vec<u8>, (usize, usize)), ()> {
+fn h264_decode(frame_data: &[u8], decoder: &mut Decoder) -> Result<(Mat, (usize, usize)), ()> {
     let mut buffer = vec![0; 2764800];
     let yuv = match decoder.decode(frame_data) {
         Ok(o) => {
@@ -52,12 +65,35 @@ fn h264_decode(frame_data: &[u8], decoder: &mut Decoder) -> Result<(Vec<u8>, (us
     let dims = yuv.dimension_rgb();
 
     yuv.write_rgba8(&mut buffer);
-        
-    Ok((buffer, dims))
+
+    //let mut bgra_buffer = unsafe { Mat::new_rows_cols(dims.1 as i32, dims.0 as i32, cv::core::CV_8UC4).unwrap() };
+    let mut bgra_buffer = Mat::default();
+    bgra_buffer.set_rows(dims.1 as i32);
+    bgra_buffer.set_rows(dims.0 as i32);
+    bgra_buffer.set_dims(2);
+    bgra_buffer.set_flags(cv::core::CV_8UC4);
+
+    let mut frame = unsafe { Mat::new_rows_cols_with_data(
+            dims.1 as i32,
+            dims.0 as i32,
+            cv::core::CV_8UC4,
+            buffer.as_mut_ptr() as *mut c_void,
+            0,
+        ).unwrap() 
+    };
+    
+    match cvt_color(&frame, &mut bgra_buffer, COLOR_RGBA2BGRA, cv::core::CV_8U) {
+        Ok(_) => {},
+        Err(e) => println!("Error image conversion failed: {:?}", e),
+    };
+    
+    //println!("{}", bgra_buffer.at_pt_mut::<u8>(cv::core::Point_ { x: 0, y: 0 }).unwrap());
+
+    Ok((bgra_buffer, dims))
 }
 
 fn main() {
-    let sock = match UdpSocket::bind("0.0.0.0:62000") {
+    let sock = match UdpSocket::bind("0.0.0.0:42069") {
         Ok(s) => s,
         Err(e) => panic!("ERROR with creating socket: {}", e),
     };
@@ -82,11 +118,15 @@ fn main() {
             Err(e) => panic!("ERROR with creating socket: {}", e),
         };
     
+        let mut win = highgui::named_window("tello", highgui::WINDOW_AUTOSIZE);
+
         let mut frame_packet = vec![];
 
         let mut decoder = Decoder::new().unwrap();
         let mut now = std::time::Instant::now();
         let mut a = 0;
+
+        let mut frame = Mat::default();
 
         loop {
             let mut video_buffer = [0; 1460];
@@ -100,9 +140,16 @@ fn main() {
             match check_for_valid_packet(&frame_packet) {
                 Some(frame_borders) => {
                     match h264_decode(&frame_packet[(frame_borders.0)..(frame_borders.1)], &mut decoder) {
-                        Ok(_) => {
+                        Ok((frbuf, dims)) => {
                             frame_packet = frame_packet[(frame_borders.1)..(frame_packet.len())].to_vec();
                             
+                            //frame = unsafe { Mat::new_rows_cols_with_data(dims.0 as i32, dims.1 as i32, cv::core::CV_8UC4, frbuf.as_mut_ptr() as *mut c_void, 1).unwrap() };
+                
+                            match highgui::imshow("tello", &frbuf) {
+                                Ok(_) => println!("SUCCESS"),
+                                Err(e) => println!("Error: {:?}", e),
+                            };
+
                             a += 1;
                             if now.elapsed().as_secs_f64() >= 1.0 {
                                 now = std::time::Instant::now();
