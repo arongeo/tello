@@ -1,9 +1,10 @@
 use std::{net::UdpSocket, io::stdin};
-use cv::highgui;
 use openh264::decoder::Decoder;
 use opencv as cv;
+use cv::highgui;
 use cv::prelude::Mat;
 use cv::imgproc::{cvt_color, COLOR_RGBA2BGRA};
+use std::sync::mpsc;
 
 use libc::c_void;
 
@@ -35,7 +36,7 @@ fn check_for_valid_packet(data_stream: &[u8]) -> Option<(usize, usize)> {
 }
 
 
-fn h264_decode(frame_data: &[u8], decoder: &mut Decoder) -> Result<Mat, ()> {
+fn h264_decode_to_bgra(frame_data: &[u8], decoder: &mut Decoder) -> Result<Mat, ()> {
     let mut buffer = vec![0; 2764800];
     let yuv = match decoder.decode(frame_data) {
         Ok(o) => {
@@ -72,10 +73,14 @@ fn h264_decode(frame_data: &[u8], decoder: &mut Decoder) -> Result<Mat, ()> {
         Ok(_) => {},
         Err(e) => println!("Error image conversion failed: {:?}", e),
     };
-    
-    //println!("{}", bgra_buffer.at_pt_mut::<u8>(cv::core::Point_ { x: 0, y: 0 }).unwrap());
 
     Ok(bgra_buffer)
+}
+
+#[derive(PartialEq, Eq)]
+enum ThreadMsg {
+    None,
+    ShutdownThread,
 }
 
 fn main() {
@@ -96,6 +101,8 @@ fn main() {
         Ok(_) => {},
         Err(_) => panic!(""),
     };
+
+    let (tx, rx) = mpsc::channel();
 
     let thread_thing = std::thread::spawn(|| {
         // receive video stream from tello on port 11111
@@ -121,12 +128,10 @@ fn main() {
 
             match check_for_valid_packet(&frame_packet) {
                 Some(frame_borders) => {
-                    match h264_decode(&frame_packet[(frame_borders.0)..(frame_borders.1)], &mut decoder) {
+                    match h264_decode_to_bgra(&frame_packet[(frame_borders.0)..(frame_borders.1)], &mut decoder) {
                         Ok(frbuf) => {
                             frame_packet = frame_packet[(frame_borders.1)..(frame_packet.len())].to_vec();
                             
-                            //frame = unsafe { Mat::new_rows_cols_with_data(dims.0 as i32, dims.1 as i32, cv::core::CV_8UC4, frbuf.as_mut_ptr() as *mut c_void, 1).unwrap() };
-                
                             match highgui::imshow("tello", &frbuf) {
                                 Ok(_) => {},
                                 Err(e) => println!("Error: {:?}", e),
@@ -134,6 +139,14 @@ fn main() {
 
                             highgui::poll_key();
 
+                            match rx.try_recv() {
+                                Ok(v) => {
+                                    if v == ThreadMsg::ShutdownThread {
+                                        break;
+                                    }
+                                },
+                                Err(_) => {},
+                            };
                         },
                         Err(_) => {
                             frame_packet = frame_packet[(frame_borders.1)..(frame_packet.len())].to_vec();
@@ -142,7 +155,6 @@ fn main() {
                 },
                 None => continue,
             }
-
         }
     });
 
@@ -152,6 +164,7 @@ fn main() {
         stdin().read_line(&mut send_buf).unwrap();
 
         if send_buf.as_str().trim() == "q" {
+            tx.send(ThreadMsg::ShutdownThread);
             break;
         }
 
