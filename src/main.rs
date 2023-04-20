@@ -3,8 +3,8 @@ use openh264::decoder::Decoder;
 use opencv as cv;
 use cv::highgui;
 use cv::prelude::Mat;
-use cv::imgproc::{cvt_color, COLOR_RGBA2BGRA};
-use std::sync::mpsc;
+use cv::imgproc::{cvt_color, COLOR_RGBA2BGRA, COLOR_BGRA2GRAY};
+use std::sync::{mpsc, Arc};
 
 use libc::c_void;
 
@@ -36,7 +36,7 @@ fn check_for_valid_packet(data_stream: &[u8]) -> Option<(usize, usize)> {
 }
 
 
-fn h264_decode_to_bgra(frame_data: &[u8], decoder: &mut Decoder) -> Result<Mat, ()> {
+fn h264_decode_to_bgra(frame_data: &[u8], decoder: &mut Decoder) -> Result<(Mat, (usize, usize)), ()> {
     let mut buffer = vec![0; 2764800];
     let yuv = match decoder.decode(frame_data) {
         Ok(o) => {
@@ -74,7 +74,19 @@ fn h264_decode_to_bgra(frame_data: &[u8], decoder: &mut Decoder) -> Result<Mat, 
         Err(e) => println!("Error image conversion failed: {:?}", e),
     };
 
-    Ok(bgra_buffer)
+    Ok((bgra_buffer, dims))
+}
+
+fn to_grayscale(matrix: &Mat, dims: (usize, usize)) -> Result<Mat, ()> {
+    let mut gray_buf = unsafe { Mat::new_rows_cols(dims.1 as i32, dims.0 as i32, 0).unwrap() };
+    match cvt_color(matrix, &mut gray_buf, COLOR_BGRA2GRAY, 0) {
+        Ok(_) => {},
+        Err(e) => {
+            println!("Error failed to create gray matrix: {}", e);
+            return Err(());
+        },
+    };
+    return Ok(gray_buf);
 }
 
 #[derive(PartialEq, Eq)]
@@ -129,13 +141,17 @@ fn main() {
             match check_for_valid_packet(&frame_packet) {
                 Some(frame_borders) => {
                     match h264_decode_to_bgra(&frame_packet[(frame_borders.0)..(frame_borders.1)], &mut decoder) {
-                        Ok(frbuf) => {
+                        Ok(result) => {
                             frame_packet = frame_packet[(frame_borders.1)..(frame_packet.len())].to_vec();
                             
-                            match highgui::imshow("tello", &frbuf) {
+                            match highgui::imshow("tello", &result.0) {
                                 Ok(_) => {},
                                 Err(e) => println!("Error: {:?}", e),
                             };
+
+                            let dims = result.1;
+
+                            let gray_buf = to_grayscale(&result.0, dims);
 
                             highgui::poll_key();
 
