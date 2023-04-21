@@ -3,9 +3,13 @@
 use std::{net::UdpSocket, io::stdin};
 use openh264::decoder::Decoder;
 use opencv as cv;
-use cv::highgui;
-use cv::prelude::Mat;
-use cv::imgproc::{cvt_color, COLOR_RGBA2BGRA, COLOR_BGRA2GRAY};
+use cv::{
+    highgui,
+    prelude::Mat,
+    imgproc::{cvt_color, COLOR_RGBA2BGRA, COLOR_BGRA2GRAY},
+    objdetect::CascadeClassifier,
+    types::VectorOfRect,
+};
 use std::sync::mpsc;
 
 use libc::c_void;
@@ -39,6 +43,8 @@ fn check_for_valid_packet(data_stream: &[u8]) -> Option<(usize, usize)> {
 
 
 fn h264_decode_to_bgra(frame_data: &[u8], decoder: &mut Decoder) -> Result<(Mat, (usize, usize)), ()> {
+    // Tello EDU, by default, has a resolution of 960 * 720, multiply that with 4, for the 4
+    // channels in RGBA, and we get 2764800. Probably shouldn't be hardcoded.
     let mut buffer = vec![0; 2764800];
     let yuv = match decoder.decode(frame_data) {
         Ok(o) => {
@@ -57,7 +63,6 @@ fn h264_decode_to_bgra(frame_data: &[u8], decoder: &mut Decoder) -> Result<(Mat,
     };
 
     let dims = yuv.dimension_rgb();
-
     yuv.write_rgba8(&mut buffer);
 
     let mut bgra_buffer = unsafe { Mat::new_rows_cols(dims.1 as i32, dims.0 as i32, cv::core::CV_8UC4).unwrap() };
@@ -118,7 +123,7 @@ fn main() {
 
     let (tx, rx) = mpsc::channel();
 
-    let thread_thing = std::thread::spawn(|| {
+    let thread_thing = std::thread::spawn(move || {
         // receive video stream from tello on port 11111
         let video_socket = match UdpSocket::bind("0.0.0.0:11111") {
             Ok(s) => s,
@@ -126,13 +131,14 @@ fn main() {
         };
     
         let _win = highgui::named_window("tello", highgui::WINDOW_AUTOSIZE);
+        let _gray_win = highgui::named_window("graytello", highgui::WINDOW_AUTOSIZE);
 
         let mut frame_packet = vec![];
 
         let mut decoder = Decoder::new().unwrap();
 
         loop {
-            let mut video_buffer = [0; 1460];
+            let mut video_buffer = [0; 2048];
             let msg_len = match video_socket.recv(&mut video_buffer) {
                 Ok(ml) => ml,
                 Err(_) => continue,
@@ -151,9 +157,15 @@ fn main() {
                                 Err(e) => println!("Error: {:?}", e),
                             };
 
-                            let dims = result.1;
+                            let gray_buf = match to_grayscale(&result.0, result.1) {
+                                Ok(m) => m,
+                                Err(_) => continue,
+                            };
 
-                            let gray_buf = to_grayscale(&result.0, dims);
+                            match highgui::imshow("graytello", &gray_buf) {
+                                Ok(_) => {},
+                                Err(e) => println!("Error: {:?}", e),
+                            };
 
                             highgui::poll_key();
 
