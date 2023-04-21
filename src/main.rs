@@ -1,10 +1,12 @@
+// DJI Tello EDU Control Program
+
 use std::{net::UdpSocket, io::stdin};
 use openh264::decoder::Decoder;
 use opencv as cv;
 use cv::highgui;
 use cv::prelude::Mat;
 use cv::imgproc::{cvt_color, COLOR_RGBA2BGRA, COLOR_BGRA2GRAY};
-use std::sync::{mpsc, Arc};
+use std::sync::mpsc;
 
 use libc::c_void;
 
