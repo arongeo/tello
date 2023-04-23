@@ -1,11 +1,8 @@
 
 use opencv as cv;
 use cv::{
-    highgui,
     prelude::Mat,
     imgproc::{cvt_color, COLOR_RGBA2BGRA, COLOR_BGRA2GRAY},
-    objdetect::CascadeClassifier,
-    types::VectorOfRect,
 };
 
 use libc::c_void;

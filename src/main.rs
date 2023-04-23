@@ -14,7 +14,6 @@ mod conversions;
 
 #[derive(PartialEq, Eq)]
 enum ThreadMsg {
-    None,
     ShutdownThread,
 }
 
