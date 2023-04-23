@@ -38,7 +38,7 @@ fn main() {
 
     let (tx, rx) = mpsc::channel();
 
-    let thread_thing = std::thread::spawn(move || {
+    let video_thread = std::thread::spawn(move || {
         // receive video stream from tello on port 11111
         let video_socket = match UdpSocket::bind("0.0.0.0:11111") {
             Ok(s) => s,
@@ -108,6 +108,28 @@ fn main() {
         }
     });
 
+    let state_thread = std::thread::spawn(move || {
+        let state_socket = match UdpSocket::bind("0.0.0.0:8890") {
+            Ok(s) => s,
+            Err(e) => panic!("ERROR with creating socket: {}", e),
+        };
+
+        loop {
+            let mut buffer = [0; 2048];
+            let msg_len = match state_socket.recv(&mut buffer) {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
+
+            let state_str = match std::str::from_utf8(&buffer[..msg_len]) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            println!("{}", state_str);
+        }
+    });
+
     loop {
         let mut send_buf = String::new();
 
@@ -131,6 +153,6 @@ fn main() {
 
     }
 
-    thread_thing.join();
+    video_thread.join();
 
 }
