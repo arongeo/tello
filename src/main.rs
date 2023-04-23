@@ -1,100 +1,16 @@
 // DJI Tello EDU Control Program
 
 use std::{net::UdpSocket, io::stdin};
-use openh264::decoder::Decoder;
+use std::sync::mpsc;
 use opencv as cv;
 use cv::{
     highgui,
-    prelude::Mat,
-    imgproc::{cvt_color, COLOR_RGBA2BGRA, COLOR_BGRA2GRAY},
     objdetect::CascadeClassifier,
     types::VectorOfRect,
 };
-use std::sync::mpsc;
 
-use libc::c_void;
-
-fn check_for_valid_packet(data_stream: &[u8]) -> Option<(usize, usize)> {
-    let mut zero_seq_len = 0;
-    let mut first = None;
-
-    for i in 0..data_stream.len() {
-        match data_stream[i] {
-            0 => {
-                zero_seq_len += 1;
-            },
-            1 => {
-                if zero_seq_len >= 2 {
-                    if first != None {
-                        return Some((first.unwrap(), i - 2));
-                    } else {
-                        first = Some(i - 2);
-                    }
-                } 
-            }
-            _ => {
-                zero_seq_len = 0;
-            }
-        }
-    }
-
-    None
-}
-
-
-fn h264_decode_to_bgra(frame_data: &[u8], decoder: &mut Decoder) -> Result<(Mat, (usize, usize)), ()> {
-    // Tello EDU, by default, has a resolution of 960 * 720, multiply that with 4, for the 4
-    // channels in RGBA, and we get 2764800. Probably shouldn't be hardcoded.
-    let mut buffer = vec![0; 2764800];
-    let yuv = match decoder.decode(frame_data) {
-        Ok(o) => {
-            match o {
-                Some(y) => {
-                    y
-                },
-                None => {
-                    return Err(());
-                },
-            }
-        },
-        Err(_) => {
-            return Err(());
-        },
-    };
-
-    let dims = yuv.dimension_rgb();
-    yuv.write_rgba8(&mut buffer);
-
-    let mut bgra_buffer = unsafe { Mat::new_rows_cols(dims.1 as i32, dims.0 as i32, cv::core::CV_8UC4).unwrap() };
-
-    let frame = unsafe { Mat::new_rows_cols_with_data(
-            dims.1 as i32,
-            dims.0 as i32,
-            cv::core::CV_8UC4,
-            buffer.as_mut_ptr() as *mut c_void,
-            0,
-        ).unwrap() 
-    };
-    
-    match cvt_color(&frame, &mut bgra_buffer, COLOR_RGBA2BGRA, 0) {
-        Ok(_) => {},
-        Err(e) => println!("Error image conversion failed: {:?}", e),
-    };
-
-    Ok((bgra_buffer, dims))
-}
-
-fn to_grayscale(matrix: &Mat, dims: (usize, usize)) -> Result<Mat, ()> {
-    let mut gray_buf = unsafe { Mat::new_rows_cols(dims.1 as i32, dims.0 as i32, 0).unwrap() };
-    match cvt_color(matrix, &mut gray_buf, COLOR_BGRA2GRAY, 0) {
-        Ok(_) => {},
-        Err(e) => {
-            println!("Error failed to create gray matrix: {}", e);
-            return Err(());
-        },
-    };
-    return Ok(gray_buf);
-}
+mod decoding;
+mod conversions;
 
 #[derive(PartialEq, Eq)]
 enum ThreadMsg {
@@ -135,7 +51,7 @@ fn main() {
 
         let mut frame_packet = vec![];
 
-        let mut decoder = Decoder::new().unwrap();
+        let mut decoder = decoding::Decoder::new().unwrap();
 
         loop {
             let mut video_buffer = [0; 2048];
@@ -146,18 +62,23 @@ fn main() {
 
             frame_packet.extend_from_slice(&video_buffer[..msg_len]);
 
-            match check_for_valid_packet(&frame_packet) {
+            match decoding::check_for_valid_packet(&frame_packet) {
                 Some(frame_borders) => {
-                    match h264_decode_to_bgra(&frame_packet[(frame_borders.0)..(frame_borders.1)], &mut decoder) {
-                        Ok(result) => {
+                    match decoding::h264_decode(&frame_packet[(frame_borders.0)..(frame_borders.1)], &mut decoder) {
+                        Ok(mut result) => {
                             frame_packet = frame_packet[(frame_borders.1)..(frame_packet.len())].to_vec();
                             
-                            match highgui::imshow("tello", &result.0) {
+                            let bgra_frame = match conversions::vec_to_bgra_mat(&mut result.0, result.1) {
+                                Ok(m) => m,
+                                Err(()) => continue,
+                            };
+
+                            match highgui::imshow("tello", &bgra_frame) {
                                 Ok(_) => {},
                                 Err(e) => println!("Error: {:?}", e),
                             };
 
-                            let gray_buf = match to_grayscale(&result.0, result.1) {
+                            let gray_buf = match conversions::mat_to_grayscale(&bgra_frame, result.1) {
                                 Ok(m) => m,
                                 Err(_) => continue,
                             };
