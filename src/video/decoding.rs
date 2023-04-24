@@ -1,6 +1,8 @@
+// H.264 decoding code
 
 pub use openh264::decoder::Decoder;
 
+/// Find two H.264 packet beginnings, and return them if they exist.
 pub fn check_for_valid_packet(data_stream: &[u8]) -> Option<(usize, usize)> {
     let mut zero_seq_len = 0;
     let mut first = None;

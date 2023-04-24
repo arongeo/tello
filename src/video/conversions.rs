@@ -1,3 +1,4 @@
+/// Code for converting between different type of images (such as RGBA, BGRA, and GRAYSCALE)
 
 use opencv as cv;
 use cv::{
