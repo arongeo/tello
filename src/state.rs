@@ -46,6 +46,7 @@ impl TelloState {
 
             let str_num = String::from_iter(num);
 
+            // Very ugly parsing solution, pretty sure there's something better out there
             match i {
                 0 => tellostate.mid = str_num.parse().unwrap(),
                 (1..=3) => tellostate.xyz[i-1] = str_num.parse().unwrap(),
