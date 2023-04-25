@@ -11,6 +11,8 @@ use cv::{
 mod decoding;
 mod conversions;
 
+const MOVEMENT_TOLERANCE: i32 = 10;
+
 pub fn spawn_video_thread(vrx: std::sync::mpsc::Receiver<crate::ThreadMsg>) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         // receive video stream from tello on port 11111
@@ -32,7 +34,12 @@ pub fn spawn_video_thread(vrx: std::sync::mpsc::Receiver<crate::ThreadMsg>) -> s
         };
 
         let mut faces = VectorOfRect::new();
+        // Limit the classifier to only around 8 fps for performance.
         let mut find_face_in = 3;
+
+        let mut last_face: Option<cv::core::Rect> = None;
+
+        let mut no_face_since = 5;
 
         loop {
             let mut video_buffer = [0; 2048];
@@ -83,15 +90,69 @@ pub fn spawn_video_thread(vrx: std::sync::mpsc::Receiver<crate::ThreadMsg>) -> s
                                     Err(e) => println!("Error with face detector: {}", e),
                                 };
 
-                                find_face_in = 3;
+                                no_face_since -= 1;
+
+                                match last_face {
+                                    None => {
+                                        let mut biggest_face = cv::core::Rect::new(0, 0, 0, 0);
+                                        for face in &faces {
+                                            let biggest_perim = (2 * biggest_face.width) + (2 * biggest_face.height);
+                                            let face_perim = (2 * face.width) + (2 * face.height);
+
+                                            if biggest_perim <= face_perim {
+                                                biggest_face = face;
+                                            }
+                                        }
+
+                                        if biggest_face != cv::core::Rect::new(0, 0, 0, 0) {
+                                            last_face = Some(biggest_face);
+                                            no_face_since = 5;
+                                        }
+                                    },
+                                    Some(lface) => {
+                                        let mut closest_face = (cv::core::Rect::new(0, 0, 0, 0), std::i32::MAX);
+
+                                        for face in &faces {
+                                            let pos_difference = (lface.x - face.x).abs() + (lface.y - face.y).abs();
+                                            let wh_difference = (lface.width - face.width).abs() + (lface.height - face.height).abs();
+
+                                            let diff_score = pos_difference + wh_difference;
+
+                                            // Display all possibilities with green
+                                            rectangle(
+                                                &mut bgra_frame,
+                                                face,
+                                                cv::core::Scalar::new(0.0, 255.0, 0.0, 0.0),
+                                                2,
+                                                cv::imgproc::LINE_8,
+                                                0
+                                            ).unwrap();
+
+                                            if diff_score < closest_face.1 {
+                                                closest_face = (face, diff_score);
+                                            }
+                                        }
+
+                                        if closest_face.1 != std::i32::MAX {
+                                            last_face = Some(closest_face.0);
+                                            no_face_since = 5;
+                                        }
+                                    }
+                                }
+
+                                find_face_in = 3; // frames
+                            }
+
+                            if no_face_since == 0 {
+                                last_face = None;
                             }
 
                             // We can still display the last frames rectangle though, since it's
                             // quite impossible to notice changes in that little amount of time.
-                            for face in &faces {
+                            if last_face != None {
                                 rectangle(
                                     &mut bgra_frame,
-                                    face,
+                                    last_face.unwrap(),
                                     cv::core::Scalar::new(255.0, 0.0, 0.0, 0.0),
                                     2,
                                     cv::imgproc::LINE_8,
