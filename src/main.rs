@@ -1,85 +1,13 @@
+// DJI Tello EDU Control Program
+
 use std::{net::UdpSocket, io::stdin};
-use openh264::decoder::Decoder;
-use opencv as cv;
-use cv::highgui;
-use cv::prelude::Mat;
-use cv::imgproc::{cvt_color, COLOR_RGBA2BGRA};
 use std::sync::mpsc;
 
-use libc::c_void;
-
-fn check_for_valid_packet(data_stream: &[u8]) -> Option<(usize, usize)> {
-    let mut zero_seq_len = 0;
-    let mut first = None;
-
-    for i in 0..data_stream.len() {
-        match data_stream[i] {
-            0 => {
-                zero_seq_len += 1;
-            },
-            1 => {
-                if zero_seq_len >= 2 {
-                    if first != None {
-                        return Some((first.unwrap(), i - 2));
-                    } else {
-                        first = Some(i - 2);
-                    }
-                } 
-            }
-            _ => {
-                zero_seq_len = 0;
-            }
-        }
-    }
-
-    None
-}
-
-
-fn h264_decode_to_bgra(frame_data: &[u8], decoder: &mut Decoder) -> Result<Mat, ()> {
-    let mut buffer = vec![0; 2764800];
-    let yuv = match decoder.decode(frame_data) {
-        Ok(o) => {
-            match o {
-                Some(y) => {
-                    y
-                },
-                None => {
-                    return Err(());
-                },
-            }
-        },
-        Err(_) => {
-            return Err(());
-        },
-    };
-
-    let dims = yuv.dimension_rgb();
-
-    yuv.write_rgba8(&mut buffer);
-
-    let mut bgra_buffer = unsafe { Mat::new_rows_cols(dims.1 as i32, dims.0 as i32, cv::core::CV_8UC4).unwrap() };
-
-    let frame = unsafe { Mat::new_rows_cols_with_data(
-            dims.1 as i32,
-            dims.0 as i32,
-            cv::core::CV_8UC4,
-            buffer.as_mut_ptr() as *mut c_void,
-            0,
-        ).unwrap() 
-    };
-    
-    match cvt_color(&frame, &mut bgra_buffer, COLOR_RGBA2BGRA, 0) {
-        Ok(_) => {},
-        Err(e) => println!("Error image conversion failed: {:?}", e),
-    };
-
-    Ok(bgra_buffer)
-}
+mod state;
+mod video;
 
 #[derive(PartialEq, Eq)]
-enum ThreadMsg {
-    None,
+pub enum ThreadMsg {
     ShutdownThread,
 }
 
@@ -102,61 +30,15 @@ fn main() {
         Err(_) => panic!(""),
     };
 
-    let (tx, rx) = mpsc::channel();
+    // Channels for communicating with the state and video thread
+    let (vtx, vrx) = mpsc::channel();
+    let (stx, srx) = mpsc::channel();
 
-    let thread_thing = std::thread::spawn(|| {
-        // receive video stream from tello on port 11111
-        let video_socket = match UdpSocket::bind("0.0.0.0:11111") {
-            Ok(s) => s,
-            Err(e) => panic!("ERROR with creating socket: {}", e),
-        };
-    
-        let _win = highgui::named_window("tello", highgui::WINDOW_AUTOSIZE);
+    // Thread for receiving and processing video stream from the Tello
+    let video_thread = video::spawn_video_thread(vrx);
 
-        let mut frame_packet = vec![];
-
-        let mut decoder = Decoder::new().unwrap();
-
-        loop {
-            let mut video_buffer = [0; 1460];
-            let msg_len = match video_socket.recv(&mut video_buffer) {
-                Ok(ml) => ml,
-                Err(_) => continue,
-            };
-
-            frame_packet.extend_from_slice(&video_buffer[..msg_len]);
-
-            match check_for_valid_packet(&frame_packet) {
-                Some(frame_borders) => {
-                    match h264_decode_to_bgra(&frame_packet[(frame_borders.0)..(frame_borders.1)], &mut decoder) {
-                        Ok(frbuf) => {
-                            frame_packet = frame_packet[(frame_borders.1)..(frame_packet.len())].to_vec();
-                            
-                            match highgui::imshow("tello", &frbuf) {
-                                Ok(_) => {},
-                                Err(e) => println!("Error: {:?}", e),
-                            };
-
-                            highgui::poll_key();
-
-                            match rx.try_recv() {
-                                Ok(v) => {
-                                    if v == ThreadMsg::ShutdownThread {
-                                        break;
-                                    }
-                                },
-                                Err(_) => {},
-                            };
-                        },
-                        Err(_) => {
-                            frame_packet = frame_packet[(frame_borders.1)..(frame_packet.len())].to_vec();
-                        }
-                    };
-                },
-                None => continue,
-            }
-        }
-    });
+    // Thread for getting state data from the Tello
+    let state_thread = state::spawn_state_thread(srx);
 
     loop {
         let mut send_buf = String::new();
@@ -164,7 +46,8 @@ fn main() {
         stdin().read_line(&mut send_buf).unwrap();
 
         if send_buf.as_str().trim() == "q" {
-            tx.send(ThreadMsg::ShutdownThread);
+            vtx.send(ThreadMsg::ShutdownThread);
+            stx.send(ThreadMsg::ShutdownThread);
             break;
         }
 
@@ -178,9 +61,9 @@ fn main() {
         };
 
         println!("{}", std::str::from_utf8(&buffer).unwrap());
-
     }
 
-    thread_thing.join();
+    video_thread.join();
+    state_thread.join();
 
 }
