@@ -6,12 +6,13 @@ use cv::{
     types::VectorOfRect, prelude::CascadeClassifierTrait,
     core::Size,
     imgproc::rectangle,
+    imgproc::circle,
 };
 
 mod decoding;
 mod conversions;
 
-const MOVEMENT_TOLERANCE: i32 = 10;
+const MOVEMENT_TOLERANCE: i32 = 200;
 
 pub fn spawn_video_thread(vrx: std::sync::mpsc::Receiver<crate::ThreadMsg>) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
@@ -143,6 +144,31 @@ pub fn spawn_video_thread(vrx: std::sync::mpsc::Receiver<crate::ThreadMsg>) -> s
                                 find_face_in = 3; // frames
                             }
 
+                            let screen_middle = (((result.1).0 / 2) as i32, ((result.1).1 / 2) as i32);
+
+                            // These points form a rectangle between which it is okay for the
+                            // middle point of the detected face to take place.
+                            let screen_boundaries = [
+                                (screen_middle.0 - MOVEMENT_TOLERANCE, screen_middle.1 - MOVEMENT_TOLERANCE),
+                                (screen_middle.0 + MOVEMENT_TOLERANCE, screen_middle.1 - MOVEMENT_TOLERANCE),
+                                (screen_middle.0 - MOVEMENT_TOLERANCE, screen_middle.1 + MOVEMENT_TOLERANCE),
+                                (screen_middle.0 + MOVEMENT_TOLERANCE, screen_middle.1 + MOVEMENT_TOLERANCE),
+                            ];
+
+                            rectangle(
+                                &mut bgra_frame,
+                                cv::core::Rect::new(
+                                    screen_boundaries[0].0,
+                                    screen_boundaries[0].1,
+                                    2*MOVEMENT_TOLERANCE,
+                                    2*MOVEMENT_TOLERANCE
+                                ),
+                                cv::core::Scalar::new(0.0, 0.0, 255.0, 0.0),
+                                2,
+                                cv::imgproc::LINE_8,
+                                0
+                            ).unwrap();
+
                             if no_face_since == 0 {
                                 last_face = None;
                             }
@@ -150,10 +176,23 @@ pub fn spawn_video_thread(vrx: std::sync::mpsc::Receiver<crate::ThreadMsg>) -> s
                             // We can still display the last frames rectangle though, since it's
                             // quite impossible to notice changes in that little amount of time.
                             if last_face != None {
+                                let lface = last_face.unwrap();
+                                let face_mid_point = (lface.x + (lface.width / 2), lface.y + (lface.height / 2));
+
                                 rectangle(
                                     &mut bgra_frame,
-                                    last_face.unwrap(),
+                                    lface,
                                     cv::core::Scalar::new(255.0, 0.0, 0.0, 0.0),
+                                    2,
+                                    cv::imgproc::LINE_8,
+                                    0
+                                ).unwrap();
+
+                                circle(
+                                    &mut bgra_frame,
+                                    cv::core::Point::new(face_mid_point.0, face_mid_point.1),
+                                    10,
+                                    cv::core::Scalar::new(0.0, 0.0, 255.0, 0.0),
                                     2,
                                     cv::imgproc::LINE_8,
                                     0
