@@ -13,6 +13,38 @@ mod decoding;
 mod conversions;
 
 const OUTER_MOVEMENT_TOLERANCE: i32 = 200;
+const INNER_MOVEMENT_TOLERANCE: i32 = OUTER_MOVEMENT_TOLERANCE - 80;
+
+fn check_if_rect_in_rect(outer_rect: cv::core::Rect, inner_rect: cv::core::Rect) -> bool {
+    let rect_pts = [
+        cv::core::Point::new(inner_rect.x, inner_rect.y),
+        cv::core::Point::new(inner_rect.x + inner_rect.width, inner_rect.y),
+        cv::core::Point::new(inner_rect.x, inner_rect.y + inner_rect.height),
+        cv::core::Point::new(inner_rect.x + inner_rect.width, inner_rect.y + inner_rect.height),
+    ];
+
+    let mut result = true;
+
+    let mut truecount = 0;
+    let mut falsecount = 0;
+
+    for point in rect_pts {
+        match outer_rect.contains(point) {
+            true => {
+                truecount += 1;
+                if (truecount > 1) {
+                    return true;
+                }
+            },
+            false => {
+                falsecount += 1;
+                result &= false;
+            }
+        }
+    }
+
+    return result;
+}
 
 pub fn spawn_video_thread(vrx: std::sync::mpsc::Receiver<crate::ThreadMsg>) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
@@ -148,29 +180,20 @@ pub fn spawn_video_thread(vrx: std::sync::mpsc::Receiver<crate::ThreadMsg>) -> s
 
                             // Middle point in which it is fine to take place for the drone and the face boundaries, 
                             // if all points are out of this the drone needs to go further back.
-                            let outer_movement_boundaries = cv::core::Rect::new(
-                                screen_middle.0 + OUTER_MOVEMENT_TOLERANCE,
+                            let mid_screen_bounds = cv::core::Rect::new(
+                                screen_middle.0 - OUTER_MOVEMENT_TOLERANCE,
                                 screen_middle.1 - OUTER_MOVEMENT_TOLERANCE,
                                 2 * OUTER_MOVEMENT_TOLERANCE,
                                 2 * OUTER_MOVEMENT_TOLERANCE
                             );
-
-                            // TODO: Define a good inner movement tolerance
-                            let inner_movement_boundaries = cv::core::Rect::new(
-                                screen_middle.0 + OUTER_MOVEMENT_TOLERANCE,
-                                screen_middle.1 - OUTER_MOVEMENT_TOLERANCE,
-                                2 * OUTER_MOVEMENT_TOLERANCE,
-                                2 * OUTER_MOVEMENT_TOLERANCE
-                            );
-
 
                             rectangle(
                                 &mut bgra_frame,
-                                screen_boundaries,
-                                cv::core::Scalar::new(0.0, 0.0, 255.0, 0.0),
+                                mid_screen_bounds,
+                                cv::core::Scalar::new(255.0, 255.0, 255.0, 0.0),
                                 2,
                                 cv::imgproc::LINE_8,
-                                0
+                                0,
                             ).unwrap();
 
                             if no_face_since == 0 {
@@ -183,8 +206,50 @@ pub fn spawn_video_thread(vrx: std::sync::mpsc::Receiver<crate::ThreadMsg>) -> s
                                 let lface = last_face.unwrap();
                                 let face_mid_point = cv::core::Point::new(lface.x + (lface.width / 2), lface.y + (lface.height / 2));
 
-                                if !screen_boundaries.contains(face_mid_point) {
-                                    todo!();
+                                if !mid_screen_bounds.contains(face_mid_point) {
+                                    println!("move accordingly")
+                                }
+
+                                let outer_movement_boundaries = cv::core::Rect::new(
+                                    face_mid_point.x - OUTER_MOVEMENT_TOLERANCE,
+                                    face_mid_point.y - OUTER_MOVEMENT_TOLERANCE,
+                                    2 * OUTER_MOVEMENT_TOLERANCE,
+                                    2 * OUTER_MOVEMENT_TOLERANCE
+                                );
+
+                                // TODO: Define a good inner movement tolerance
+                                let inner_movement_boundaries = cv::core::Rect::new(
+                                    face_mid_point.x - INNER_MOVEMENT_TOLERANCE,
+                                    face_mid_point.y - INNER_MOVEMENT_TOLERANCE,
+                                    2 * INNER_MOVEMENT_TOLERANCE,
+                                    2 * INNER_MOVEMENT_TOLERANCE
+                                );
+
+                                rectangle(
+                                    &mut bgra_frame,
+                                    outer_movement_boundaries,
+                                    cv::core::Scalar::new(0.0, 0.0, 255.0, 0.0),
+                                    2,
+                                    cv::imgproc::LINE_8,
+                                    0
+                                ).unwrap();
+
+                                rectangle(
+                                    &mut bgra_frame,
+                                    inner_movement_boundaries,
+                                    cv::core::Scalar::new(0.0, 0.0, 255.0, 0.0),
+                                    2,
+                                    cv::imgproc::LINE_8,
+                                    0
+                                ).unwrap();
+
+                                if check_if_rect_in_rect(outer_movement_boundaries, lface) {
+                                    println!("cool");
+                                    if check_if_rect_in_rect(inner_movement_boundaries, lface) {
+                                        println!("go forward");
+                                    }
+                                } else {
+                                    println!("go back");
                                 }
 
                                 rectangle(
