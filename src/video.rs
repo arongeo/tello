@@ -12,7 +12,7 @@ use cv::{
 mod decoding;
 mod conversions;
 
-const MOVEMENT_TOLERANCE: i32 = 200;
+const OUTER_MOVEMENT_TOLERANCE: i32 = 200;
 
 pub fn spawn_video_thread(vrx: std::sync::mpsc::Receiver<crate::ThreadMsg>) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
@@ -146,14 +146,23 @@ pub fn spawn_video_thread(vrx: std::sync::mpsc::Receiver<crate::ThreadMsg>) -> s
 
                             let screen_middle = (((result.1).0 / 2) as i32, ((result.1).1 / 2) as i32);
 
-                            // These points form a rectangle between which it is okay for the
-                            // middle point of the detected face to take place.
-                            let screen_boundaries = cv::core::Rect::new(
-                                screen_middle.0 + MOVEMENT_TOLERANCE,
-                                screen_middle.1 - MOVEMENT_TOLERANCE,
-                                2*MOVEMENT_TOLERANCE,
-                                2*MOVEMENT_TOLERANCE
+                            // Middle point in which it is fine to take place for the drone and the face boundaries, 
+                            // if all points are out of this the drone needs to go further back.
+                            let outer_movement_boundaries = cv::core::Rect::new(
+                                screen_middle.0 + OUTER_MOVEMENT_TOLERANCE,
+                                screen_middle.1 - OUTER_MOVEMENT_TOLERANCE,
+                                2 * OUTER_MOVEMENT_TOLERANCE,
+                                2 * OUTER_MOVEMENT_TOLERANCE
                             );
+
+                            // TODO: Define a good inner movement tolerance
+                            let inner_movement_boundaries = cv::core::Rect::new(
+                                screen_middle.0 + OUTER_MOVEMENT_TOLERANCE,
+                                screen_middle.1 - OUTER_MOVEMENT_TOLERANCE,
+                                2 * OUTER_MOVEMENT_TOLERANCE,
+                                2 * OUTER_MOVEMENT_TOLERANCE
+                            );
+
 
                             rectangle(
                                 &mut bgra_frame,
