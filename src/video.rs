@@ -148,21 +148,16 @@ pub fn spawn_video_thread(vrx: std::sync::mpsc::Receiver<crate::ThreadMsg>) -> s
 
                             // These points form a rectangle between which it is okay for the
                             // middle point of the detected face to take place.
-                            let screen_boundaries = [
-                                (screen_middle.0 - MOVEMENT_TOLERANCE, screen_middle.1 - MOVEMENT_TOLERANCE),
-                                (screen_middle.0 + MOVEMENT_TOLERANCE, screen_middle.1 - MOVEMENT_TOLERANCE),
-                                (screen_middle.0 - MOVEMENT_TOLERANCE, screen_middle.1 + MOVEMENT_TOLERANCE),
-                                (screen_middle.0 + MOVEMENT_TOLERANCE, screen_middle.1 + MOVEMENT_TOLERANCE),
-                            ];
+                            let screen_boundaries = cv::core::Rect::new(
+                                screen_middle.0 + MOVEMENT_TOLERANCE,
+                                screen_middle.1 - MOVEMENT_TOLERANCE,
+                                2*MOVEMENT_TOLERANCE,
+                                2*MOVEMENT_TOLERANCE
+                            );
 
                             rectangle(
                                 &mut bgra_frame,
-                                cv::core::Rect::new(
-                                    screen_boundaries[0].0,
-                                    screen_boundaries[0].1,
-                                    2*MOVEMENT_TOLERANCE,
-                                    2*MOVEMENT_TOLERANCE
-                                ),
+                                screen_boundaries,
                                 cv::core::Scalar::new(0.0, 0.0, 255.0, 0.0),
                                 2,
                                 cv::imgproc::LINE_8,
@@ -177,7 +172,11 @@ pub fn spawn_video_thread(vrx: std::sync::mpsc::Receiver<crate::ThreadMsg>) -> s
                             // quite impossible to notice changes in that little amount of time.
                             if last_face != None {
                                 let lface = last_face.unwrap();
-                                let face_mid_point = (lface.x + (lface.width / 2), lface.y + (lface.height / 2));
+                                let face_mid_point = cv::core::Point::new(lface.x + (lface.width / 2), lface.y + (lface.height / 2));
+
+                                if !screen_boundaries.contains(face_mid_point) {
+                                    todo!();
+                                }
 
                                 rectangle(
                                     &mut bgra_frame,
@@ -190,7 +189,7 @@ pub fn spawn_video_thread(vrx: std::sync::mpsc::Receiver<crate::ThreadMsg>) -> s
 
                                 circle(
                                     &mut bgra_frame,
-                                    cv::core::Point::new(face_mid_point.0, face_mid_point.1),
+                                    face_mid_point,
                                     10,
                                     cv::core::Scalar::new(0.0, 0.0, 255.0, 0.0),
                                     2,
